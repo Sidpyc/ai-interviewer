@@ -1,4 +1,6 @@
 fastapi 
 uvicorn
-multipart
+python-multipart
 starlette
+pypdf
+python-docx 

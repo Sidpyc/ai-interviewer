@@ -1,11 +1,16 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware 
+from fastapi import FastAPI, UploadFile, File,  HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pypdf import PdfReader
+from docx import Document
+import io
+
+
 app = FastAPI()
 
 #Cors Settings
 origins = [
     "http://localhost",
-    "http://localhost:3000", 
+    "http://localhost:3000",
 ]
 
 #Cors Middleware
@@ -19,15 +24,42 @@ app.add_middleware(
 
 
 
-
-@app.get("/hello-world")
-async def hello_world():
-    return {"message": "Hello from FastAPI Backend!"}
-
-@app.get("/items/{item_id}")
-async def read_item(item_id: int, q: str | None = None):
-    return {"item_id": item_id, "q": q}
+# @app.get("/items/{item_id}")
+# async def read_item(item_id: int, q: str | None = None):
+#     return {"item_id": item_id, "q": q}
 
 @app.get("/api/data")
 async def data():
-    return {"message": "Retrieved Successfully "}
+    return {"message": "Retrieved Successfully"}
+
+@app.post("/upload-resume/")
+async def upload_resume(file: UploadFile = File(...)):
+    extracted_text = ''
+    file_content = await file.read()
+    
+    if file.content_type == "application/pdf":
+        try:
+            pdf_reader = PdfReader(io.BytesIO(file_content))
+            for page in pdf_reader.pages:
+                extracted_text += page.extract_text() + '\n'
+        
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error Processing pdf:{e}")
+    elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        try:
+            # Use io.BytesIO to treat bytes content as a file-like object
+            document = Document(io.BytesIO(file_content))
+            for paragraph in document.paragraphs:
+                extracted_text += paragraph.text + "\n"
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error processing DOCX: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file type. Please upload a PDF or DOCX.")
+
+
+    return {
+        "filename": file.filename,
+        "content_type": file.content_type,
+        "extracted_text": extracted_text.strip() # Remove leading/trailing whitespace
+    }
+
