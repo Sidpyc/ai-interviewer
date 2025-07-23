@@ -5,9 +5,11 @@ from docx import Document
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fpdf import FPDF 
+# FPDF is not used in the current version.
+# from fpdf import FPDF
 from json_repair import loads as json_repair_loads
-from ollama import Client as OllamaClient
+# Commenting out Ollama client import for Google Gemini integration
+# from ollama import Client as OllamaClient
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, Text, create_engine
@@ -17,8 +19,9 @@ import os
 import io
 import tempfile
 
-# FIX: Re-added Docling DocumentConverter import
 from docling.document_converter import DocumentConverter
+# NEW: Google Generative AI SDK import
+import google.generativeai as genai
 
 
 load_dotenv()
@@ -38,19 +41,33 @@ interview_sessions = Table(
     Column("id", Integer, primary_key=True, index=True),
     Column("timestamp", DateTime, default=datetime.utcnow),
     Column("original_filename", String),
-    Column("extracted_resume_text", Text), # Raw/Markdown text from Docling/fallback
-    Column("parsed_resume_data", JSONB),  # Structured JSON from LLM parsing
+    Column("extracted_resume_text", Text),
+    Column("parsed_resume_data", JSONB),
     Column("job_role", String),
     Column("difficulty", String),
-    Column("generated_questions", JSONB), # List of generated question strings
-    Column("qa_evaluations", JSONB, default={}), # Stores list of {question, answer, score, feedback}
+    Column("generated_questions", JSONB),
+    Column("qa_evaluations", JSONB, default={}),
 )
 
-# --- LLM Client Configuration ---
-ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-ollama_model_name = os.getenv("OLLAMA_MODEL_NAME", "llama3")
+# --- LLM Client Configuration (Now for Google Gemini) ---
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    raise ValueError("GOOGLE_API_KEY environment variable not set. Please set it in your .env file.")
 
-ollama_client = OllamaClient(host=ollama_base_url)
+genai.configure(api_key=GOOGLE_API_KEY)
+
+# Choose your Gemini model:
+# gemini-pro is a good general-purpose model.
+# gemini-1.5-flash is faster and good for large contexts.
+# gemini-1.5-pro is more capable but slower and potentially more expensive.
+GEMINI_MODEL_NAME = "gemini-1.5-flash" # Recommended for speed and cost-effectiveness
+
+
+# Commenting out Ollama client initialization
+# ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+# ollama_model_name = os.getenv("OLLAMA_MODEL_NAME", "llama3")
+# ollama_client = OllamaClient(host=ollama_base_url)
+
 
 # --- Docling Converter Initialization ---
 docling_converter = DocumentConverter()
@@ -111,6 +128,7 @@ class OverallSummaryResponse(BaseModel):
 
 
 # --- Helper Function for LLM output cleaning/repair ---
+# This function is still crucial for handling potential non-JSON output from Gemini
 def _repair_llm_json(response_content: str) -> dict:
     try:
         repaired_json = json_repair_loads(response_content)
@@ -221,15 +239,13 @@ async def upload_resume(file: UploadFile = File(...)):
             {extracted_resume_text}
             ---
             """
-            response = ollama_client.chat(
-                model=ollama_model_name,
-                messages=[
-                    {"role": "system", "content": "You are a helpful AI assistant designed to output JSON."},
-                    {"role": "user", "content": parsing_prompt}
-                ],
-                options={"temperature": 0.0}
+            # Using Google Gemini (instead of Ollama) for parsing
+            model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+            response = await model.generate_content_async(
+                parsing_prompt,
+                generation_config=genai.types.GenerationConfig(temperature=0.0)
             )
-            llm_raw_response_content = response['message']['content']
+            llm_raw_response_content = response.text # Gemini's content is in .text
 
             parsed_resume_data = _repair_llm_json(llm_raw_response_content)
 
@@ -245,11 +261,10 @@ async def upload_resume(file: UploadFile = File(...)):
             last_record_id = await database.execute(query)
 
         except ValueError as e:
-            raise HTTPException(status_code=500, detail=f"AI parsing error (Ollama): {e}")
+            raise HTTPException(status_code=500, detail=f"AI parsing error (Gemini JSON): {e}")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"AI parsing error (Ollama) or DB insert error: {e}")
+            raise HTTPException(status_code=500, detail=f"AI parsing error (Gemini API) or DB insert error: {e}")
 
-    # This is the 'except' for the OUTERMOST try block in upload_resume
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File processing error: {e}")
 
@@ -299,16 +314,14 @@ async def generate_questions(request: QuestionGenerationRequest):
     """
     llm_raw_response_content = ""
     try:
-        response = ollama_client.chat(
-            model=ollama_model_name,
-            messages=[
-                {"role": "system", "content": "You are a helpful AI assistant designed to output JSON."},
-                {"role": "user", "content": question_prompt}
-            ],
-            options={"temperature": 0.0}
+        # Using Google Gemini (instead of Ollama) for question generation
+        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+        response = await model.generate_content_async(
+            question_prompt,
+            generation_config=genai.types.GenerationConfig(temperature=0.0)
         )
-        llm_raw_response_content = response['message']['content'] # Corrected variable name from llm_raw_response_response
-
+        llm_raw_response_content = response.text 
+        
         parsed_llm_output = _repair_llm_json(llm_raw_response_content)
         generated_questions = parsed_llm_output.get("questions", [])
 
@@ -323,9 +336,9 @@ async def generate_questions(request: QuestionGenerationRequest):
         await database.execute(update_query)
 
     except ValueError as e:
-        raise HTTPException(status_code=500, detail=f"AI question generation error (Ollama): {e}")
+        raise HTTPException(status_code=500, detail=f"AI question generation error (Gemini JSON): {e}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI question generation error (Ollama): {e}")
+        raise HTTPException(status_code=500, detail=f"AI question generation error (Gemini API): {e}")
 
     return {
         "job_role": job_role,
@@ -393,15 +406,13 @@ async def evaluate_answers(request: EvaluationRequest):
     """
     llm_raw_response_content = ""
     try:
-        response = ollama_client.chat(
-            model=ollama_model_name,
-            messages=[
-                {"role": "system", "content": "You are a helpful AI assistant designed to output JSON."},
-                {"role": "user", "content": evaluation_prompt}
-            ],
-            options={"temperature": 0.0}
+        # NEW: Google Gemini API Call for Evaluation
+        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+        response = await model.generate_content_async(
+            evaluation_prompt,
+            generation_config=genai.types.GenerationConfig(temperature=0.0)
         )
-        llm_raw_response_content = response['message']['content']
+        llm_raw_response_content = response.text
 
         evaluation_result_data = _repair_llm_json(llm_raw_response_content)
         
@@ -424,9 +435,9 @@ async def evaluate_answers(request: EvaluationRequest):
         ])
 
     except ValueError as e:
-        raise HTTPException(status_code=500, detail=f"AI evaluation error (Ollama): {e}")
+        raise HTTPException(status_code=500, detail=f"AI evaluation error (Gemini JSON): {e}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI evaluation error (Ollama): {e}")
+        raise HTTPException(status_code=500, detail=f"AI evaluation error (Gemini API): {e}")
 
 
 # --- Endpoint for Overall Interview Summary ---
@@ -480,15 +491,12 @@ async def generate_summary(session_id: int):
         """
         llm_raw_response_content = ""
         try: # Inner try for Ollama API call
-            response = ollama_client.chat(
-                model=ollama_model_name,
-                messages=[
-                    {"role": "system", "content": "You are a helpful AI assistant."},
-                    {"role": "user", "content": summary_prompt}
-                ],
-                options={"temperature": 0.5}
+            model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+            response = await model.generate_content_async(
+                summary_prompt,
+                generation_config=genai.types.GenerationConfig(temperature=0.5)
             )
-            llm_raw_response_content = response['message']['content']
+            llm_raw_response_content = response.text
             
             generated_summary = llm_raw_response_content.strip()
 
