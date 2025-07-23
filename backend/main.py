@@ -92,6 +92,8 @@ origins = [
     "http://localhost",
     "http://localhost:3000",
     "https://ai-interviewer-opqjz6ke6-sidpycs-projects.vercel.app",
+    "https://ai-interviewer-beta-six.vercel.app/"
+
 ]
 
 app.add_middleware(
