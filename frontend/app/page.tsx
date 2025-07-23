@@ -41,12 +41,18 @@ export default function Home() {
   // State for the AI-generated overall summary (replaces PDF download for now)
   const [overallSummary, setOverallSummary] = useState<string | null>(null);
 
+  // --- Backend Base URL ---
+  // IMPORTANT: For production deployment on Vercel, this should come from an environment variable:
+  // const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+  // For now, explicitly using the Render URL as requested for local testing.
+  const BACKEND_BASE_URL = "https://ai-interviewer-1-lj0z.onrender.com";
+
 
   // Effect hook to check backend connection status on component mount
   useEffect(() => {
     const fetchMessage = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/message');
+        const response = await fetch(`${BACKEND_BASE_URL}/api/message`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -54,12 +60,12 @@ export default function Home() {
         setBackendMessage(data.data);
       } catch (e: unknown) { // Use unknown for catch errors
         const errorMessage = e instanceof Error ? e.message : String(e);
-        setError(`Failed to load backend status: ${errorMessage}. Is the backend running at http://localhost:8000?`);
+        setError(`Failed to load backend status: ${errorMessage}. Is the backend running at ${BACKEND_BASE_URL}?`);
         setBackendMessage('Error fetching backend status.');
       }
     };
     fetchMessage();
-  }, []);
+  }, [BACKEND_BASE_URL]); // Added BACKEND_BASE_URL to dependency array
 
 
   // Handler for when a file is selected via the input
@@ -101,7 +107,7 @@ export default function Home() {
     formData.append('file', selectedFile);
 
     try {
-      const response = await fetch('http://localhost:8000/upload-resume/', {
+      const response = await fetch(`${BACKEND_BASE_URL}/upload-resume/`, {
         method: 'POST',
         body: formData,
       });
@@ -143,7 +149,7 @@ export default function Home() {
     setOverallSummary(null); // Clear overall summary
 
     try {
-      const response = await fetch('http://localhost:8000/generate-questions/', {
+      const response = await fetch(`${BACKEND_BASE_URL}/generate-questions/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -208,7 +214,7 @@ export default function Home() {
 
     try {
       // Make API call to the backend evaluation endpoint
-      const response = await fetch('http://localhost:8000/evaluate-answers/', {
+      const response = await fetch(`${BACKEND_BASE_URL}/evaluate-answers/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -258,7 +264,7 @@ export default function Home() {
         return;
     }
     try {
-        const response = await fetch(`http://localhost:8000/generate-summary/${currentSessionId}`, {
+        const response = await fetch(`${BACKEND_BASE_URL}/generate-summary/${currentSessionId}`, {
             method: 'GET',
         });
         if (!response.ok) {
