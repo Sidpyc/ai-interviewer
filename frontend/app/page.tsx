@@ -3,34 +3,46 @@
 
 import { useState, useEffect } from 'react';
 
+// Define UI states for the application flow
 type AppState = 'initial' | 'uploading' | 'parsing_complete' | 'generating_questions' | 'interview_active' | 'evaluating_answers' | 'evaluation_complete';
 
+// Type for an individual interview question, including user's answer and AI evaluation
 interface InterviewQuestion {
   question: string;
-  answer: string;
-  evaluation?: {
+  answer: string; // User's typed answer
+  evaluation?: { // Optional AI evaluation data
     score: number;
     feedback: string;
   };
 }
 
 export default function Home() {
+  // State for backend connection status
   const [backendMessage, setBackendMessage] = useState<string>('Loading backend connection status...');
+  // State for general error messages
   const [error, setError] = useState<string | null>(null);
 
+  // State for the currently selected file
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  // Controls the current step/section displayed in the UI
   const [appState, setAppState] = useState<AppState>('initial');
+  // Displays detailed status messages to the user
   const [currentStatus, setCurrentStatus] = useState<string>('');
 
+  // State to store the current interview session ID from the backend
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
 
+  // States for job role and difficulty for question generation
   const [jobRole, setJobRole] = useState<string>('');
   const [difficulty, setDifficulty] = useState<string>('medium');
+  // Stores the generated interview questions along with user's answers and AI evaluation
   const [interviewQuestions, setInterviewQuestions] = useState<InterviewQuestion[]>([]);
 
+  // State for the AI-generated overall summary (replaces PDF download for now)
   const [overallSummary, setOverallSummary] = useState<string | null>(null);
 
 
+  // Effect hook to check backend connection status on component mount
   useEffect(() => {
     const fetchMessage = async () => {
       try {
@@ -40,46 +52,51 @@ export default function Home() {
         }
         const data = await response.json();
         setBackendMessage(data.data);
-      } catch (e: any) {
-        // console.error removed for production
-        setError(`Failed to load backend status: ${e.message}. Is the backend running at http://localhost:8000?`);
+      } catch (e: unknown) { // FIX: Changed e: any to e: unknown
+        // For 'unknown' type, you often need to check the type before accessing properties
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        setError(`Failed to load backend status: ${errorMessage}. Is the backend running at http://localhost:8000?`);
         setBackendMessage('Error fetching backend status.');
       }
     };
     fetchMessage();
-  }, []);
+  }, []); // Empty dependency array means this runs once on mount
 
 
+  // Handler for when a file is selected via the input
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
       setSelectedFile(event.target.files[0]);
+      // Reset all relevant states for a fresh start with new file
       setCurrentStatus('');
       setError(null);
       setAppState('initial');
       setInterviewQuestions([]);
       setJobRole('');
       setDifficulty('medium');
-      setCurrentSessionId(null);
-      setOverallSummary(null);
+      setCurrentSessionId(null); // Clear session ID on new file selection
+      setOverallSummary(null); // Clear overall summary
     } else {
       setSelectedFile(null);
     }
+    // Crucial for allowing re-selection of the same file in some browsers
     event.target.value = ''; 
   };
 
 
+  // Handler for initiating the file upload to the backend
   const handleFileUpload = async () => {
     if (!selectedFile) {
       setCurrentStatus('Please select a file first.');
       return;
     }
 
-    setAppState('uploading');
-    setCurrentStatus('Processing resume with AI (this may take a few minutes for initial model loading)...');
+    setAppState('uploading'); // Transition UI to 'uploading' state
+    setCurrentStatus('Processing resume with AI (this may take a few minutes for initial model loading)...'); // Update status message
     setError(null);
-    setInterviewQuestions([]);
-    setCurrentSessionId(null);
-    setOverallSummary(null);
+    setInterviewQuestions([]); // Clear any previous interview data
+    setCurrentSessionId(null); // Ensure no old session ID is used
+    setOverallSummary(null); // Clear overall summary
 
     const formData = new FormData();
     formData.append('file', selectedFile);
@@ -96,34 +113,35 @@ export default function Home() {
       }
 
       const result = await response.json();
-      setCurrentSessionId(result.session_id);
+      setCurrentSessionId(result.session_id); // Store the new session ID
       setCurrentStatus('Resume processed successfully! Now, let\'s generate questions.');
-      setAppState('parsing_complete');
+      setAppState('parsing_complete'); // Transition UI to 'parsing_complete' state
 
-    } catch (e: any) {
-      // console.error removed for production
-      setCurrentStatus(`Upload failed: ${e.message}`);
-      setError(e.message);
-      setAppState('initial');
+    } catch (e: unknown) { // FIX: Changed e: any to e: unknown
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      setCurrentStatus(`Upload failed: ${errorMessage}`);
+      setError(errorMessage);
+      setAppState('initial'); // Revert to 'initial' state on error
     }
   };
 
 
+  // Handler for generating interview questions from the backend
   const handleGenerateQuestions = async () => {
-    if (appState !== 'parsing_complete' || currentSessionId === null) {
+    if (appState !== 'parsing_complete' || currentSessionId === null) { // Ensure a resume has been parsed and session exists
       setCurrentStatus('Please upload and parse a resume first to start a session.');
       return;
     }
-    if (!jobRole.trim()) {
+    if (!jobRole.trim()) { // Ensure job role is provided
         setCurrentStatus('Please enter a job role.');
         return;
     }
 
-    setAppState('generating_questions');
-    setCurrentStatus('Generating personalized interview questions...');
+    setAppState('generating_questions'); // Transition UI to 'generating_questions' state
+    setCurrentStatus('Generating personalized interview questions...'); // Update status message
     setError(null);
-    setInterviewQuestions([]);
-    setOverallSummary(null);
+    setInterviewQuestions([]); // Clear any old questions
+    setOverallSummary(null); // Clear overall summary
 
     try {
       const response = await fetch('http://localhost:8000/generate-questions/', {
@@ -132,7 +150,7 @@ export default function Home() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          session_id: currentSessionId,
+          session_id: currentSessionId, // Send the session ID
           job_role: jobRole,
           difficulty: difficulty,
         }),
@@ -144,34 +162,37 @@ export default function Home() {
       }
 
       const result = await response.json();
+      // Initialize questions with empty answers for user input
       const initialQuestions: InterviewQuestion[] = (result.questions || []).map((q: string) => ({
         question: q,
-        answer: ''
+        answer: '' // Each question starts with an empty answer
       }));
       setInterviewQuestions(initialQuestions);
-      setCurrentStatus('10 questions generated! Please answer them below.');
-      setAppState('interview_active');
-      // console.log removed for production
+      setCurrentStatus('10 questions generated! Please answer them below.'); // Update status
+      setAppState('interview_active'); // Transition UI to 'interview_active' state
 
-    } catch (e: any) {
-      // console.error removed for production
-      setCurrentStatus(`Question generation failed: ${e.message}`);
-      setError(e.message);
-      setAppState('parsing_complete');
+    } catch (e: unknown) { // FIX: Changed e: any to e: unknown
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      setCurrentStatus(`Question generation failed: ${errorMessage}`);
+      setError(errorMessage);
+      setAppState('parsing_complete'); // Revert to 'parsing_complete' state on error
     }
   };
 
 
+  // Handler for updating a user's answer in the state as they type
   const handleAnswerChange = (index: number, value: string) => {
     setInterviewQuestions(prevQuestions =>
       prevQuestions.map((q, i) =>
-        i === index ? { ...q, answer: value } : q
+        i === index ? { ...q, answer: value } : q // Update only the specific question's answer
       )
     );
   };
 
 
+  // Handler for submitting all answers for AI evaluation
   const handleSubmitAnswers = async () => {
+    // Check if any answer box is still empty
     if (interviewQuestions.some(q => q.answer.trim() === '')) {
       setCurrentStatus('Please answer all questions before submitting.');
       return;
@@ -181,19 +202,20 @@ export default function Home() {
         return;
     }
 
-    setAppState('evaluating_answers');
-    setCurrentStatus('AI is evaluating your answers and generating feedback...');
+    setAppState('evaluating_answers'); // Transition UI to 'evaluating_answers' state
+    setCurrentStatus('AI is evaluating your answers and generating feedback...'); // Update status
     setError(null);
-    setOverallSummary(null);
+    setOverallSummary(null); // Clear previous summary
 
     try {
+      // Make API call to the backend evaluation endpoint
       const response = await fetch('http://localhost:8000/evaluate-answers/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          session_id: currentSessionId,
+          session_id: currentSessionId, // Send the session ID for context and storage
           questions_with_answers: interviewQuestions.map(q => ({
             question: q.question,
             answer: q.answer
@@ -206,27 +228,31 @@ export default function Home() {
         throw new Error(`Evaluation failed with status: ${response.status}, message: ${errorData.detail || 'Unknown error'}`);
       }
 
-      const evaluationResult = await response.json();
-      setCurrentStatus('Evaluation complete! Generating overall summary...');
+      const evaluationResult = await response.json(); // Expected: { evaluations: [{ score, feedback }] }
+      setCurrentStatus('Evaluation complete! Generating overall summary...'); // Status update for summary
       
+      // Update the interviewQuestions state with the received evaluation results
       setInterviewQuestions(prevQuestions =>
         prevQuestions.map((q, index) => ({
           ...q,
-          evaluation: evaluationResult.evaluations[index] || { score: 0, feedback: 'No feedback.' }
+          evaluation: evaluationResult.evaluations[index] || { score: 0, feedback: 'No feedback.' } // Assign evaluation data
         }))
       );
+      // Trigger overall summary generation after individual evaluation
       await fetchOverallSummary(); 
+      // After fetching summary, set final state
       setAppState('evaluation_complete'); 
 
-    } catch (e: any) {
-      // console.error removed for production
-      setCurrentStatus(`Evaluation failed: ${e.message}`);
-      setError(e.message);
-      setAppState('interview_active');
+    } catch (e: unknown) { // FIX: Changed e: any to e: unknown
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      setCurrentStatus(`Evaluation failed: ${errorMessage}`);
+      setError(errorMessage);
+      setAppState('interview_active'); // Revert to 'interview_active' state on error
     }
   };
 
 
+  // Handler for fetching overall summary from backend
   const fetchOverallSummary = async () => {
     if (currentSessionId === null) {
         setOverallSummary('Error: No session ID to generate summary.');
@@ -243,28 +269,29 @@ export default function Home() {
         const result = await response.json();
         setOverallSummary(result.summary);
         setCurrentStatus('Evaluation and overall summary complete! Scroll down to view the summary.');
-    } catch (e: any) {
-        // console.error removed for production
-        setOverallSummary(`Failed to generate overall summary: ${e.message}`);
-        setError(e.message);
+    } catch (e: unknown) { // FIX: Changed e: any to e: unknown
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      setOverallSummary(`Failed to generate overall summary: ${errorMessage}`);
+      setError(errorMessage);
     }
   };
 
 
+  // Handler to clear all application data and reset UI to initial state
   const handleClearAll = () => {
     setSelectedFile(null);
     const fileInput = document.getElementById('resumeFileInput') as HTMLInputElement;
     if (fileInput) {
-      fileInput.value = '';
+      fileInput.value = ''; // Ensure the file input is cleared
     }
     setAppState('initial');
     setCurrentStatus('');
     setJobRole('');
     setDifficulty('medium');
-    setInterviewQuestions([]);
+    setInterviewQuestions([]); // Clear all questions and answers
     setError(null);
-    setCurrentSessionId(null);
-    setOverallSummary(null);
+    setCurrentSessionId(null); // Clear the session ID
+    setOverallSummary(null); // Clear the overall summary
   };
 
 
@@ -356,6 +383,7 @@ export default function Home() {
               marginBottom: '15px'
           }}></div>
           <p style={{ fontSize: '1.2em', color: '#0070f3' }}>{currentStatus}</p>
+          {/* Inline style for keyframe animation */}
           <style jsx>{`
             @keyframes spin {
               0% { transform: rotate(0deg); }
@@ -482,7 +510,7 @@ export default function Home() {
                 onChange={(e) => handleAnswerChange(index, e.target.value)}
                 rows={5}
                 placeholder="Type your answer here..."
-                disabled={appState === 'evaluating_answers' || appState === 'evaluation_complete'}
+                disabled={appState === 'evaluating_answers' || appState === 'evaluation_complete'} // Disable while evaluating or after complete
                 style={{
                   width: '100%',
                   padding: '8px',
