@@ -7,14 +7,10 @@ python-docx
 openai
 python-dotenv
 ollama
-# pyresparser
-# spacy==2.3.5
-# nltk
 docling
-json_repair #avoids rewriting cleanup functions for json structure
-#Database related
-asyncpg  #asynch
-sqlalchemy #ORM Mapper
+json_repair 
+asyncpg  
+sqlalchemy 
 databases
 fpdf2
 google-generativeai
