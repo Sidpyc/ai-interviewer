@@ -3,43 +3,34 @@
 
 import { useState, useEffect } from 'react';
 
-// Define UI states for the application flow
 type AppState = 'initial' | 'uploading' | 'parsing_complete' | 'generating_questions' | 'interview_active' | 'evaluating_answers' | 'evaluation_complete';
 
-// Type for an individual interview question, including user's answer and AI evaluation
 interface InterviewQuestion {
   question: string;
-  answer: string; // User's typed answer
-  evaluation?: { // Optional AI evaluation data
+  answer: string;
+  evaluation?: {
     score: number;
     feedback: string;
   };
 }
 
 export default function Home() {
-  // State for backend connection status
   const [backendMessage, setBackendMessage] = useState<string>('Loading backend connection status...');
-  // State for general error messages
   const [error, setError] = useState<string | null>(null);
 
-  // State for the currently selected file
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  // Controls the current step/section displayed in the UI
   const [appState, setAppState] = useState<AppState>('initial');
-  // Displays detailed status messages to the user
   const [currentStatus, setCurrentStatus] = useState<string>('');
 
-  // State to store the current interview session ID from the backend
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
 
-  // States for job role and difficulty for question generation
   const [jobRole, setJobRole] = useState<string>('');
   const [difficulty, setDifficulty] = useState<string>('medium');
-  // Stores the generated interview questions along with user's answers and AI evaluation
   const [interviewQuestions, setInterviewQuestions] = useState<InterviewQuestion[]>([]);
 
+  const [overallSummary, setOverallSummary] = useState<string | null>(null);
 
-  // Effect hook to check backend connection status on component mount
+
   useEffect(() => {
     const fetchMessage = async () => {
       try {
@@ -50,47 +41,45 @@ export default function Home() {
         const data = await response.json();
         setBackendMessage(data.data);
       } catch (e: any) {
-        console.error("Failed to fetch message from backend:", e);
+        // console.error removed for production
         setError(`Failed to load backend status: ${e.message}. Is the backend running at http://localhost:8000?`);
         setBackendMessage('Error fetching backend status.');
       }
     };
     fetchMessage();
-  }, []); // Empty dependency array means this runs once on mount
+  }, []);
 
 
-  // Handler for when a file is selected via the input
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
       setSelectedFile(event.target.files[0]);
-      // Reset all relevant states for a fresh start with new file
       setCurrentStatus('');
       setError(null);
       setAppState('initial');
       setInterviewQuestions([]);
       setJobRole('');
       setDifficulty('medium');
-      setCurrentSessionId(null); // Clear session ID on new file selection
+      setCurrentSessionId(null);
+      setOverallSummary(null);
     } else {
       setSelectedFile(null);
     }
-    // Crucial for allowing re-selection of the same file in some browsers
     event.target.value = ''; 
   };
 
 
-  // Handler for initiating the file upload to the backend
   const handleFileUpload = async () => {
     if (!selectedFile) {
       setCurrentStatus('Please select a file first.');
       return;
     }
 
-    setAppState('uploading'); // Transition UI to 'uploading' state
-    setCurrentStatus('Processing resume with AI (this may take a few minutes for initial model loading)...'); // Update status message
+    setAppState('uploading');
+    setCurrentStatus('Processing resume with AI (this may take a few minutes for initial model loading)...');
     setError(null);
-    setInterviewQuestions([]); // Clear any previous interview data
-    setCurrentSessionId(null); // Ensure no old session ID is used
+    setInterviewQuestions([]);
+    setCurrentSessionId(null);
+    setOverallSummary(null);
 
     const formData = new FormData();
     formData.append('file', selectedFile);
@@ -107,34 +96,34 @@ export default function Home() {
       }
 
       const result = await response.json();
-      setCurrentSessionId(result.session_id); // Store the new session ID
+      setCurrentSessionId(result.session_id);
       setCurrentStatus('Resume processed successfully! Now, let\'s generate questions.');
-      setAppState('parsing_complete'); // Transition UI to 'parsing_complete' state
+      setAppState('parsing_complete');
 
     } catch (e: any) {
-      console.error('Error during file upload:', e);
+      // console.error removed for production
       setCurrentStatus(`Upload failed: ${e.message}`);
       setError(e.message);
-      setAppState('initial'); // Revert to 'initial' state on error
+      setAppState('initial');
     }
   };
 
 
-  // Handler for generating interview questions from the backend
   const handleGenerateQuestions = async () => {
-    if (appState !== 'parsing_complete' || currentSessionId === null) { // Ensure a resume has been parsed and session exists
+    if (appState !== 'parsing_complete' || currentSessionId === null) {
       setCurrentStatus('Please upload and parse a resume first to start a session.');
       return;
     }
-    if (!jobRole.trim()) { // Ensure job role is provided
+    if (!jobRole.trim()) {
         setCurrentStatus('Please enter a job role.');
         return;
     }
 
-    setAppState('generating_questions'); // Transition UI to 'generating_questions' state
-    setCurrentStatus('Generating personalized interview questions...'); // Update status message
+    setAppState('generating_questions');
+    setCurrentStatus('Generating personalized interview questions...');
     setError(null);
-    setInterviewQuestions([]); // Clear any old questions
+    setInterviewQuestions([]);
+    setOverallSummary(null);
 
     try {
       const response = await fetch('http://localhost:8000/generate-questions/', {
@@ -143,7 +132,7 @@ export default function Home() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          session_id: currentSessionId, // Send the session ID
+          session_id: currentSessionId,
           job_role: jobRole,
           difficulty: difficulty,
         }),
@@ -155,38 +144,34 @@ export default function Home() {
       }
 
       const result = await response.json();
-      // Initialize questions with empty answers for user input
       const initialQuestions: InterviewQuestion[] = (result.questions || []).map((q: string) => ({
         question: q,
-        answer: '' // Each question starts with an empty answer
+        answer: ''
       }));
       setInterviewQuestions(initialQuestions);
-      setCurrentStatus('10 questions generated! Please answer them below.'); // Update status
-      setAppState('interview_active'); // Transition UI to 'interview_active' state
-      console.log('Generated Questions:', result);
+      setCurrentStatus('10 questions generated! Please answer them below.');
+      setAppState('interview_active');
+      // console.log removed for production
 
     } catch (e: any) {
-      console.error('Error generating questions:', e);
+      // console.error removed for production
       setCurrentStatus(`Question generation failed: ${e.message}`);
       setError(e.message);
-      setAppState('parsing_complete'); // Revert to 'parsing_complete' state on error
+      setAppState('parsing_complete');
     }
   };
 
 
-  // Handler for updating a user's answer in the state as they type
   const handleAnswerChange = (index: number, value: string) => {
     setInterviewQuestions(prevQuestions =>
       prevQuestions.map((q, i) =>
-        i === index ? { ...q, answer: value } : q // Update only the specific question's answer
+        i === index ? { ...q, answer: value } : q
       )
     );
   };
 
 
-  // Handler for submitting all answers for AI evaluation
   const handleSubmitAnswers = async () => {
-    // Check if any answer box is still empty
     if (interviewQuestions.some(q => q.answer.trim() === '')) {
       setCurrentStatus('Please answer all questions before submitting.');
       return;
@@ -196,19 +181,19 @@ export default function Home() {
         return;
     }
 
-    setAppState('evaluating_answers'); // Transition UI to 'evaluating_answers' state
-    setCurrentStatus('AI is evaluating your answers and generating feedback...'); // Update status
+    setAppState('evaluating_answers');
+    setCurrentStatus('AI is evaluating your answers and generating feedback...');
     setError(null);
+    setOverallSummary(null);
 
     try {
-      // Make API call to the backend evaluation endpoint
       const response = await fetch('http://localhost:8000/evaluate-answers/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          session_id: currentSessionId, // Send the session ID for context and storage
+          session_id: currentSessionId,
           questions_with_answers: interviewQuestions.map(q => ({
             question: q.question,
             answer: q.answer
@@ -221,73 +206,56 @@ export default function Home() {
         throw new Error(`Evaluation failed with status: ${response.status}, message: ${errorData.detail || 'Unknown error'}`);
       }
 
-      const evaluationResult = await response.json(); // Expected: { evaluations: [{ score, feedback }] }
-      setCurrentStatus('Evaluation complete! See AI feedback below. You can now download your report.');
+      const evaluationResult = await response.json();
+      setCurrentStatus('Evaluation complete! Generating overall summary...');
       
-      // Update the interviewQuestions state with the received evaluation results
       setInterviewQuestions(prevQuestions =>
         prevQuestions.map((q, index) => ({
           ...q,
-          evaluation: evaluationResult.evaluations[index] || { score: 0, feedback: 'No feedback.' } // Assign evaluation data
+          evaluation: evaluationResult.evaluations[index] || { score: 0, feedback: 'No feedback.' }
         }))
       );
-      setAppState('evaluation_complete'); // NEW: Move to 'evaluation_complete' state after getting results
+      await fetchOverallSummary(); 
+      setAppState('evaluation_complete'); 
 
     } catch (e: any) {
-      console.error('Error during evaluation:', e);
+      // console.error removed for production
       setCurrentStatus(`Evaluation failed: ${e.message}`);
       setError(e.message);
-      setAppState('interview_active'); // Revert to 'interview_active' state on error
+      setAppState('interview_active');
     }
   };
 
 
-  // NEW: Handler for downloading the PDF report
-  const handleDownloadPdf = async () => {
-    if (currentSessionId === null || appState !== 'evaluation_complete') {
-        setCurrentStatus('No evaluation report to download. Please complete an interview first.');
+  const fetchOverallSummary = async () => {
+    if (currentSessionId === null) {
+        setOverallSummary('Error: No session ID to generate summary.');
         return;
     }
-    setCurrentStatus('Preparing PDF report for download...');
-    setError(null);
-
     try {
-        const response = await fetch(`http://localhost:8000/download-report/${currentSessionId}`, {
+        const response = await fetch(`http://localhost:8000/generate-summary/${currentSessionId}`, {
             method: 'GET',
         });
-
         if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(`PDF download failed: ${response.status}, message: ${errorData.detail || 'Unknown error'}`);
+            throw new Error(`Summary generation failed: ${response.status}, message: ${errorData.detail || 'Unknown error'}`);
         }
-
-        // Get the blob (binary data) from the response
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        // Suggest a filename
-        a.download = `interview_report_session_${currentSessionId}.pdf`; 
-        document.body.appendChild(a);
-        a.click();
-        a.remove(); // Clean up the temporary URL and element
-        window.URL.revokeObjectURL(url); // Free up resources
-
-        setCurrentStatus('PDF report downloaded successfully!');
+        const result = await response.json();
+        setOverallSummary(result.summary);
+        setCurrentStatus('Evaluation and overall summary complete! Scroll down to view the summary.');
     } catch (e: any) {
-        console.error('Error during PDF download:', e);
-        setCurrentStatus(`PDF download failed: ${e.message}`);
+        // console.error removed for production
+        setOverallSummary(`Failed to generate overall summary: ${e.message}`);
         setError(e.message);
     }
   };
 
 
-  // Handler to clear all application data and reset UI to initial state
   const handleClearAll = () => {
     setSelectedFile(null);
     const fileInput = document.getElementById('resumeFileInput') as HTMLInputElement;
     if (fileInput) {
-      fileInput.value = ''; // Ensure the file input is cleared
+      fileInput.value = '';
     }
     setAppState('initial');
     setCurrentStatus('');
@@ -295,7 +263,8 @@ export default function Home() {
     setDifficulty('medium');
     setInterviewQuestions([]);
     setError(null);
-    setCurrentSessionId(null); // Clear the session ID
+    setCurrentSessionId(null);
+    setOverallSummary(null);
   };
 
 
@@ -321,55 +290,56 @@ export default function Home() {
         </div>
       )}
 
-      {/* Step 1: Upload Resume Section - Always visible, but buttons disabled during processing */}
-      <section style={{ marginBottom: '40px', border: '1px solid #ccc', padding: '20px', borderRadius: '8px' }}>
-        <h2 style={{ color: '#0070f3' }}>Step 1: Upload Resume for AI Analysis</h2>
-        <div style={{ marginBottom: '15px' }}>
-          <input
-            type="file"
-            id="resumeFileInput"
-            accept=".pdf,.docx"
-            onChange={handleFileChange}
-            disabled={appState === 'uploading'}
-            style={{ border: '1px solid #ccc', padding: '10px', borderRadius: '5px', width: '100%', boxSizing: 'border-box' }}
-          />
-        </div>
-        <p style={{ fontSize: '0.9em', color: '#555', marginBottom: '15px' }}>
+      {/* Step 1: Upload Resume Section - Visible only in 'initial' state */}
+      {appState === 'initial' && (
+        <section style={{ marginBottom: '40px', border: '1px solid #ccc', padding: '20px', borderRadius: '8px' }}>
+          <h2 style={{ color: '#0070f3' }}>Step 1: Upload Resume for AI Analysis</h2>
+          <div style={{ marginBottom: '15px' }}>
+            <input
+              type="file"
+              id="resumeFileInput"
+              accept=".pdf,.docx"
+              onChange={handleFileChange}
+              style={{ border: '1px solid #ccc', padding: '10px', borderRadius: '5px', width: '100%', boxSizing: 'border-box' }}
+            />
+          </div>
+          <p style={{ fontSize: '0.9em', color: '#555', marginBottom: '15px' }}>
             Selected File: <strong>{selectedFile ? selectedFile.name : 'No file chosen'}</strong>
-        </p>
-        <button
-          onClick={handleFileUpload}
-          disabled={!selectedFile || appState === 'uploading'}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: (selectedFile && appState !== 'uploading') ? '#0070f3' : '#ccc',
-            color: 'white',
-            border: 'none',
-            borderRadius: '5px',
-            cursor: (selectedFile && appState !== 'uploading') ? 'pointer' : 'not-allowed',
-            fontSize: '16px',
-            marginRight: '10px'
-          }}
-        >
-          {appState === 'uploading' ? 'Processing...' : 'Upload & Process Resume'}
-        </button>
-        <button
-          onClick={handleClearAll}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#dc3545',
-            color: 'white',
-            border: 'none',
-            borderRadius: '5px',
-            cursor: 'pointer',
-            fontSize: '16px'
-          }}
-        >
-          Clear All
-        </button>
-      </section>
+          </p>
+          <button
+            onClick={handleFileUpload}
+            disabled={!selectedFile}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: selectedFile ? '#0070f3' : '#ccc',
+              color: 'white',
+              border: 'none',
+              borderRadius: '5px',
+              cursor: selectedFile ? 'pointer' : 'not-allowed',
+              fontSize: '16px',
+              marginRight: '10px'
+            }}
+          >
+            Upload & Process Resume
+          </button>
+          <button
+            onClick={handleClearAll}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: '#dc3545',
+              color: 'white',
+              border: 'none',
+              borderRadius: '5px',
+              cursor: 'pointer',
+              fontSize: '16px'
+            }}
+          >
+            Clear All
+          </button>
+        </section>
+      )}
 
-      {/* Loading Spinner for Parsing - Renders when appState is 'uploading' */}
+      {/* Loading Spinner for Resume Parsing (Upload phase) */}
       {appState === 'uploading' && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -395,7 +365,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Step 2: Question Generation Section - Conditionally visible only AFTER parsing is complete */}
+      {/* Step 2: Question Generation Section - Visible after parsing_complete and all subsequent states */}
       {(appState === 'parsing_complete' || appState === 'generating_questions' || appState === 'interview_active' || appState === 'evaluating_answers' || appState === 'evaluation_complete') && (
         <section style={{ marginBottom: '40px', border: '1px solid #28a745', padding: '20px', borderRadius: '8px', backgroundColor: '#f0fff0' }}>
           <h2 style={{ color: '#28a745' }}>Step 2: Generate Interview Questions</h2>
@@ -446,7 +416,7 @@ export default function Home() {
               backgroundColor: (jobRole.trim() && appState !== 'generating_questions' && appState !== 'interview_active' && appState !== 'evaluating_answers' && appState !== 'evaluation_complete') ? '#28a745' : '#ccc',
               color: 'white',
               border: 'none',
-              borderRadius: '5px',
+              borderRadius: '5px', 
               cursor: (jobRole.trim() && appState !== 'generating_questions' && appState !== 'interview_active' && appState !== 'evaluating_answers' && appState !== 'evaluation_complete') ? 'pointer' : 'not-allowed',
               fontSize: '16px',
               marginRight: '10px'
@@ -497,7 +467,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Step 3: Interview Questions and Answer Boxes - Visible only when interview is active or evaluation complete */}
+      {/* Step 3: Interview Questions and Answer Boxes - Visible when interview is active or evaluation complete */}
       {(appState === 'interview_active' || appState === 'evaluation_complete' || appState === 'evaluating_answers') && interviewQuestions.length > 0 && (
         <section style={{ marginBottom: '40px', border: '1px solid #0056b3', padding: '20px', borderRadius: '8px', backgroundColor: '#e0f7fa' }}>
           <h2 style={{ color: '#0056b3' }}>Step 3: Answer Interview Questions</h2>
@@ -512,7 +482,7 @@ export default function Home() {
                 onChange={(e) => handleAnswerChange(index, e.target.value)}
                 rows={5}
                 placeholder="Type your answer here..."
-                disabled={appState === 'evaluating_answers' || appState === 'evaluation_complete'} // Disable while evaluating or after complete
+                disabled={appState === 'evaluating_answers' || appState === 'evaluation_complete'}
                 style={{
                   width: '100%',
                   padding: '8px',
@@ -522,7 +492,7 @@ export default function Home() {
                   resize: 'vertical'
                 }}
               />
-              {/* AI evaluation will be displayed here */}
+              {/* AI evaluation for individual questions */}
               {item.evaluation && (
                 <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#f0f8ff', borderLeft: '3px solid #007bff', fontSize: '0.9em' }}>
                   <p style={{ fontWeight: 'bold', color: '#007bff' }}>AI Score: {item.evaluation.score}/10</p>
@@ -532,7 +502,7 @@ export default function Home() {
             </div>
           ))}
           {/* Action buttons after answering/evaluation */}
-          <div style={{ display: 'flex', justifyContent: 'flex-start', gap: '10px', marginTop: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-start', gap: '10px', marginTop: '20px', flexWrap: 'wrap' }}>
             {appState !== 'evaluation_complete' && ( // Only show Submit Answers before evaluation is complete
               <button
                 onClick={handleSubmitAnswers}
@@ -551,21 +521,23 @@ export default function Home() {
               </button>
             )}
 
-            {appState === 'evaluation_complete' && ( // Show Download PDF only after evaluation is complete
-              <button
-                onClick={handleDownloadPdf}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#007bff', // Blue color for download
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '5px',
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                }}
-              >
-                Download PDF Report
-              </button>
+            {/* Overall Summary Display */}
+            {appState === 'evaluation_complete' && overallSummary && (
+                <div style={{ marginTop: '20px', borderTop: '1px solid #eee', paddingTop: '20px', width: '100%' }}>
+                    <h3 style={{ color: '#333', marginBottom: '10px' }}>Overall Interview Summary:</h3>
+                    <div style={{
+                        backgroundColor: '#e6f7ff',
+                        padding: '15px',
+                        borderRadius: '8px',
+                        border: '1px solid #a3d9ff',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                        maxHeight: '400px',
+                        overflowY: 'auto'
+                    }}>
+                        {overallSummary}
+                    </div>
+                </div>
             )}
             
             <button
