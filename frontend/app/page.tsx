@@ -52,15 +52,14 @@ export default function Home() {
         }
         const data = await response.json();
         setBackendMessage(data.data);
-      } catch (e: unknown) { // FIX: Changed e: any to e: unknown
-        // For 'unknown' type, you often need to check the type before accessing properties
+      } catch (e: unknown) { // Use unknown for catch errors
         const errorMessage = e instanceof Error ? e.message : String(e);
         setError(`Failed to load backend status: ${errorMessage}. Is the backend running at http://localhost:8000?`);
         setBackendMessage('Error fetching backend status.');
       }
     };
     fetchMessage();
-  }, []); // Empty dependency array means this runs once on mount
+  }, []);
 
 
   // Handler for when a file is selected via the input
@@ -117,7 +116,7 @@ export default function Home() {
       setCurrentStatus('Resume processed successfully! Now, let\'s generate questions.');
       setAppState('parsing_complete'); // Transition UI to 'parsing_complete' state
 
-    } catch (e: unknown) { // FIX: Changed e: any to e: unknown
+    } catch (e: unknown) { // Use unknown for catch errors
       const errorMessage = e instanceof Error ? e.message : String(e);
       setCurrentStatus(`Upload failed: ${errorMessage}`);
       setError(errorMessage);
@@ -171,7 +170,7 @@ export default function Home() {
       setCurrentStatus('10 questions generated! Please answer them below.'); // Update status
       setAppState('interview_active'); // Transition UI to 'interview_active' state
 
-    } catch (e: unknown) { // FIX: Changed e: any to e: unknown
+    } catch (e: unknown) { // Use unknown for catch errors
       const errorMessage = e instanceof Error ? e.message : String(e);
       setCurrentStatus(`Question generation failed: ${errorMessage}`);
       setError(errorMessage);
@@ -243,7 +242,7 @@ export default function Home() {
       // After fetching summary, set final state
       setAppState('evaluation_complete'); 
 
-    } catch (e: unknown) { // FIX: Changed e: any to e: unknown
+    } catch (e: unknown) { // Use unknown for catch errors
       const errorMessage = e instanceof Error ? e.message : String(e);
       setCurrentStatus(`Evaluation failed: ${errorMessage}`);
       setError(errorMessage);
@@ -269,7 +268,7 @@ export default function Home() {
         const result = await response.json();
         setOverallSummary(result.summary);
         setCurrentStatus('Evaluation and overall summary complete! Scroll down to view the summary.');
-    } catch (e: unknown) { // FIX: Changed e: any to e: unknown
+    } catch (e: unknown) { // Use unknown for catch errors
       const errorMessage = e instanceof Error ? e.message : String(e);
       setOverallSummary(`Failed to generate overall summary: ${errorMessage}`);
       setError(errorMessage);
