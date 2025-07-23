@@ -91,6 +91,7 @@ async def shutdown():
 origins = [
     "http://localhost",
     "http://localhost:3000",
+    "https://ai-interviewer-opqjz6ke6-sidpycs-projects.vercel.app",
 ]
 
 app.add_middleware(
