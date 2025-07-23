@@ -92,8 +92,9 @@ origins = [
     "http://localhost",
     "http://localhost:3000",
     "https://ai-interviewer-opqjz6ke6-sidpycs-projects.vercel.app",
-    "https://ai-interviewer-beta-six.vercel.app/"
-    "https://ai-interviewer-8d1iitqa8-sidpycs-projects.vercel.app"
+    "https://ai-interviewer-beta-six.vercel.app",
+    "https://ai-interviewer-beta-six.vercel.app/",
+    "https://ai-interviewer-8d1iitqa8-sidpycs-projects.vercel.app",
 
 ]
 
