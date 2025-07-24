@@ -95,7 +95,7 @@ origins = [
     "https://ai-interviewer-beta-six.vercel.app",
     "https://ai-interviewer-beta-six.vercel.app/",
     "https://ai-interviewer-8d1iitqa8-sidpycs-projects.vercel.app",
-
+    "*",
 ]
 
 app.add_middleware(
