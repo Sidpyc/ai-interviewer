@@ -3,7 +3,7 @@ from datetime import datetime
 from databases import Database
 from docx import Document
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Response # Ensure Response is imported
 from fastapi.middleware.cors import CORSMiddleware
 # FPDF is not used in the current version.
 # from fpdf import FPDF
@@ -17,11 +17,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 import os
 import io
-import tempfile
+import tempfile # Still needed for generic temporary file operations if fallback needs it.
 
-from docling.document_converter import DocumentConverter
-# NEW: Google Generative AI SDK import
+# Google Generative AI SDK import
 import google.generativeai as genai
+
+# Docling import removed as it's the source of the issue.
+# from docling.document_converter import DocumentConverter
 
 
 load_dotenv()
@@ -41,15 +43,15 @@ interview_sessions = Table(
     Column("id", Integer, primary_key=True, index=True),
     Column("timestamp", DateTime, default=datetime.utcnow),
     Column("original_filename", String),
-    Column("extracted_resume_text", Text),
-    Column("parsed_resume_data", JSONB),
+    Column("extracted_resume_text", Text), # Raw text from pypdf/python-docx
+    Column("parsed_resume_data", JSONB),  # Structured JSON from LLM parsing
     Column("job_role", String),
     Column("difficulty", String),
-    Column("generated_questions", JSONB),
-    Column("qa_evaluations", JSONB, default={}),
+    Column("generated_questions", JSONB), # List of generated question strings
+    Column("qa_evaluations", JSONB, default={}), # Stores list of {question, answer, score, feedback}
 )
 
-# --- LLM Client Configuration (Now for Google Gemini) ---
+# --- LLM Client Configuration (Google Gemini) ---
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     raise ValueError("GOOGLE_API_KEY environment variable not set. Please set it in your .env file.")
@@ -57,20 +59,11 @@ if not GOOGLE_API_KEY:
 genai.configure(api_key=GOOGLE_API_KEY)
 
 # Choose your Gemini model:
-# gemini-pro is a good general-purpose model.
-# gemini-1.5-flash is faster and good for large contexts.
-# gemini-1.5-pro is more capable but slower and potentially more expensive.
 GEMINI_MODEL_NAME = "gemini-1.5-flash" # Recommended for speed and cost-effectiveness
 
 
-# Commenting out Ollama client initialization
-# ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-# ollama_model_name = os.getenv("OLLAMA_MODEL_NAME", "llama3")
-# ollama_client = OllamaClient(host=ollama_base_url)
-
-
-# --- Docling Converter Initialization ---
-docling_converter = DocumentConverter()
+# --- Docling Converter Initialization (REMOVED) ---
+# docling_converter = DocumentConverter()
 
 
 # --- FastAPI App Initialization ---
@@ -88,14 +81,13 @@ async def shutdown():
     await database.disconnect()
 
 # --- CORS Middleware ---
+# Ensure your Vercel frontend URL is here
 origins = [
     "http://localhost",
     "http://localhost:3000",
-    "https://ai-interviewer-opqjz6ke6-sidpycs-projects.vercel.app",
-    "https://ai-interviewer-beta-six.vercel.app",
-    "https://ai-interviewer-beta-six.vercel.app/",
-    "https://ai-interviewer-8d1iitqa8-sidpycs-projects.vercel.app",
-    "*",
+    "https://ai-interviewer-beta-six.vercel.app", # Replace with your actual Vercel URL
+    "https://ai-interviewer-1-lj0z.onrender.com", # Added backend URL too, sometimes useful for direct backend access
+    "*" # TEMPORARY: Keep for aggressive debugging, but remove for production
 ]
 
 app.add_middleware(
@@ -133,7 +125,6 @@ class OverallSummaryResponse(BaseModel):
 
 
 # --- Helper Function for LLM output cleaning/repair ---
-# This function is still crucial for handling potential non-JSON output from Gemini
 def _repair_llm_json(response_content: str) -> dict:
     try:
         repaired_json = json_repair_loads(response_content)
@@ -156,122 +147,101 @@ async def get_message():
 
 @app.post("/upload-resume/")
 async def upload_resume(file: UploadFile = File(...)):
-    try: # Outer try for entire endpoint logic (Docling, LLM parsing, DB insert)
-        fd, temp_file_path = tempfile.mkstemp(suffix=f".{file.filename.split('.')[-1]}")
-        
-        try: # Inner try for Docling conversion and fallback file handling
-            with os.fdopen(fd, 'wb') as tmp:
-                tmp.write(await file.read())
-            
-            extracted_text_from_docling = ""
-            
-            doc = docling_converter.convert(temp_file_path)
-            extracted_text_from_docling = doc.document.export_to_markdown()
-                
-        except Exception as e: # Catch exceptions from Docling conversion
-            # Fallback to simple pypdf/python-docx extraction if Docling fails
-            file_content_fallback = await file.read() 
-            if file.content_type == "application/pdf":
-                try:
-                    pdf_reader = PdfReader(io.BytesIO(file_content_fallback))
-                    for page in pdf_reader.pages:
-                        extracted_text_from_docling += page.extract_text() + "\n"
-                except Exception as pdf_e:
-                    raise HTTPException(status_code=400, detail=f"Error processing PDF with PyPDF: {pdf_e}")
-            elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                try:
-                    document = Document(io.BytesIO(file_content_fallback))
-                    for paragraph in document.paragraphs:
-                        extracted_text_from_docling += paragraph.text + "\n"
-                except Exception as docx_e:
-                    raise HTTPException(status_code=400, detail=f"Error processing DOCX with python-docx: {docx_e}")
-            else:
-                raise HTTPException(status_code=400, detail="Unsupported file type for fallback. Please upload a PDF or DOCX.")
-        finally: # This finally block ensures temp file is removed after inner try completes
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path) 
+    # Reverting to direct pypdf/python-docx extraction, removing Docling specific calls
+    extracted_text = ""
+    file_content = await file.read() # Read the file content once
 
-        if not extracted_text_from_docling.strip():
-            raise HTTPException(status_code=400, detail="Could not extract text from the resume. The file might be empty or unreadable after Docling/fallback.")
+    try:
+        if file.content_type == "application/pdf":
+            # Using pypdf for PDF extraction
+            pdf_reader = PdfReader(io.BytesIO(file_content))
+            for page in pdf_reader.pages:
+                extracted_text += page.extract_text() + "\n"
+        elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            # Using python-docx for DOCX extraction
+            document = Document(io.BytesIO(file_content))
+            for paragraph in document.paragraphs:
+                extracted_text += paragraph.text + "\n"
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file type. Please upload a PDF or DOCX.")
 
-        extracted_resume_text = extracted_text_from_docling.strip()
+        if not extracted_text.strip():
+            raise HTTPException(status_code=400, detail="Could not extract text from the resume. The file might be empty or unreadable.")
+
+        extracted_resume_text = extracted_text.strip()
 
         llm_raw_response_content = ""
-        # Inner try block for LLM parsing and DB insert
-        try: 
-            parsing_prompt = f"""
-            You are a highly skilled resume parser. Your task is to extract key information from the provided resume text (which might be in Markdown format) and return it ONLY in a structured JSON format.
+        # Now pass the extracted_resume_text (raw text) directly to Gemini for parsing
+        parsing_prompt = f"""
+        You are a highly skilled resume parser. Your task is to extract key information from the provided resume text and return it ONLY in a structured JSON format.
 
-            Important Rules for JSON Output:
-            1.  The entire output must be a single, valid JSON object.
-            2.  Do NOT include any text, explanations, or markdown code fences (e.g., ```json) outside the JSON object itself.
-            3.  All string values within the JSON must be properly escaped (e.g., double quotes within a string must be \\" or newlines as \\n).
-            4.  Ensure all arrays and objects are correctly opened and closed.
-            5.  All key-value pairs must be separated by commas, except for the last pair in an object or array.
-            6.  If a field is not found, omit it from the JSON.
+        Important Rules for JSON Output:
+        1.  The entire output must be a single, valid JSON object.
+        2.  Do NOT include any text, explanations, or markdown code fences (e.g., ```json) outside the JSON object itself.
+        3.  All string values within the JSON must be properly escaped (e.g., double quotes within a string must be \\" or newlines as \\n).
+        4.  Ensure all arrays and objects are correctly opened and closed.
+        5.  All key-value pairs must be separated by commas, except for the last pair in an object or array.
+        6.  If a field is not found, omit it from the JSON.
 
-            Extract the following fields accurately:
-            - name: (string) Full name of the candidate.
-            - contact: (object)
-                - email: (string) Candidate's email address.
-                - phone: (string) Candidate's phone number.
-                - linkedin: (string, optional) LinkedIn profile URL.
-                - github: (string, optional) GitHub profile URL.
-            - summary: (string, optional) A brief professional summary or objective.
-            - education: (array of objects)
-                - degree: (string) Degree obtained (e.g., "Master of Science", "B.Tech").
-                - major: (string) Major field of study (e.g., "Computer Science").
-                - institution: (string) Name of the university or college.
-                - start_date: (string, optional) Start date (e.g., "YYYY-MM" or "Month YYYY").
-                - end_date: (string, optional) End date (e.g., "YYYY-MM" or "Month YYYY", "Present" if currently enrolled).
-            - experience: (array of objects)
-                - title: (string) Job title.
-                - company: (string) Company name.
-                - start_date: (string) Start date of employment (e.g., "YYYY-MM" or "Month YYYY").
-                - end_date: (string, optional) End date of employment (e.g., "YYYY-MM" or "Month YYYY", "Present" if current).
-                - description: (string) A detailed description of responsibilities and achievements. Preserve newlines and special characters by escaping them correctly within the JSON string.
-            - skills: (object)
-                - technical: (array of strings) Programming languages, frameworks, tools, databases, cloud platforms.
-                - soft: (array of strings, optional) Communication, teamwork, problem-solving, leadership.
-                - languages: (array of strings, optional) Spoken languages.
-            - projects: (array of objects, optional)
-                - name: (string) Project name.
-                - description: (string) Project description and technologies used. Preserve newlines and special characters by escaping them correctly within the JSON string.
-                - link: (string, optional) Link to the project (e.g., GitHub repo).
+        Extract the following fields accurately:
+        - name: (string) Full name of the candidate.
+        - contact: (object)
+            - email: (string) Candidate's email address.
+            - phone: (string) Candidate's phone number.
+            - linkedin: (string, optional) LinkedIn profile URL.
+            - github: (string, optional) GitHub profile URL.
+        - summary: (string, optional) A brief professional summary or objective.
+        - education: (array of objects)
+            - degree: (string) Degree obtained (e.g., "Master of Science", "B.Tech").
+            - major: (string) Major field of study (e.g., "Computer Science").
+            - institution: (string) Name of the university or college.
+            - start_date: (string, optional) Start date (e.g., "YYYY-MM" or "Month YYYY").
+            - end_date: (string, optional) End date (e.g., "YYYY-MM" or "Month YYYY", "Present" if currently enrolled).
+        - experience: (array of objects)
+            - title: (string) Job title.
+            - company: (string) Company name.
+            - start_date: (string) Start date of employment (e.g., "YYYY-MM" or "Month YYYY").
+            - end_date: (string, optional) End date of employment (e.g., "YYYY-MM" or "Month YYYY", "Present" if current).
+            - description: (string) A detailed description of responsibilities and achievements. Preserve newlines and special characters by escaping them correctly within the JSON string.
+        - skills: (object)
+            - technical: (array of strings) Programming languages, frameworks, tools, databases, cloud platforms.
+            - soft: (array of strings, optional) Communication, teamwork, problem-solving, leadership.
+            - languages: (array of strings, optional) Spoken languages.
+        - projects: (array of objects, optional)
+            - name: (string) Project name.
+            - description: (string) Project description and technologies used. Preserve newlines and special characters by escaping them correctly within the JSON string.
+            - link: (string, optional) Link to the project (e.g., GitHub repo).
 
-            Resume Text:
-            ---
-            {extracted_resume_text}
-            ---
-            """
-            # Using Google Gemini (instead of Ollama) for parsing
-            model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-            response = await model.generate_content_async(
-                parsing_prompt,
-                generation_config=genai.types.GenerationConfig(temperature=0.0)
-            )
-            llm_raw_response_content = response.text # Gemini's content is in .text
+        Resume Text:
+        ---
+        {extracted_resume_text}
+        ---
+        """
+        # Using Google Gemini for parsing
+        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+        response = await model.generate_content_async(
+            parsing_prompt,
+            generation_config=genai.types.GenerationConfig(temperature=0.0)
+        )
+        llm_raw_response_content = response.text 
 
-            parsed_resume_data = _repair_llm_json(llm_raw_response_content)
+        parsed_resume_data = _repair_llm_json(llm_raw_response_content)
 
-            query = interview_sessions.insert().values(
-                original_filename=file.filename,
-                extracted_resume_text=extracted_resume_text,
-                parsed_resume_data=parsed_resume_data,
-                job_role="",
-                difficulty="",
-                generated_questions=[],
-                qa_evaluations={}
-            )
-            last_record_id = await database.execute(query)
+        query = interview_sessions.insert().values(
+            original_filename=file.filename,
+            extracted_resume_text=extracted_resume_text, # Store raw text in DB
+            parsed_resume_data=parsed_resume_data,
+            job_role="",
+            difficulty="",
+            generated_questions=[],
+            qa_evaluations={}
+        )
+        last_record_id = await database.execute(query)
 
-        except ValueError as e:
-            raise HTTPException(status_code=500, detail=f"AI parsing error (Gemini JSON): {e}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"AI parsing error (Gemini API) or DB insert error: {e}")
-
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=f"AI parsing error (Gemini JSON): {e}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"File processing error: {e}")
+        raise HTTPException(status_code=500, detail=f"AI parsing error (Gemini API) or DB insert error: {e}")
 
     return {"message": "Resume uploaded and processed. Ready for question generation.", "session_id": last_record_id}
 
@@ -319,7 +289,7 @@ async def generate_questions(request: QuestionGenerationRequest):
     """
     llm_raw_response_content = ""
     try:
-        # Using Google Gemini (instead of Ollama) for question generation
+        # Using Google Gemini for question generation
         model = genai.GenerativeModel(GEMINI_MODEL_NAME)
         response = await model.generate_content_async(
             question_prompt,
@@ -411,7 +381,7 @@ async def evaluate_answers(request: EvaluationRequest):
     """
     llm_raw_response_content = ""
     try:
-        # NEW: Google Gemini API Call for Evaluation
+        # Using Google Gemini for Evaluation
         model = genai.GenerativeModel(GEMINI_MODEL_NAME)
         response = await model.generate_content_async(
             evaluation_prompt,
@@ -495,7 +465,7 @@ async def generate_summary(session_id: int):
         Generate the overall summary and recommendations:
         """
         llm_raw_response_content = ""
-        try: # Inner try for Ollama API call
+        try: # Inner try for Google Gemini API call
             model = genai.GenerativeModel(GEMINI_MODEL_NAME)
             response = await model.generate_content_async(
                 summary_prompt,
@@ -507,7 +477,7 @@ async def generate_summary(session_id: int):
 
             return OverallSummaryResponse(summary=generated_summary)
 
-        except Exception as e: # This 'except' catches errors from the inner Ollama call
+        except Exception as e: # This 'except' catches errors from the inner Google Gemini call
             raise HTTPException(status_code=500, detail=f"AI summary generation error: {e}")
 
     except Exception as e: # This 'except' catches errors from the outer try block (e.g., DB fetch)
