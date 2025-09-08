@@ -19,6 +19,16 @@ interface ChatMessage {
   };
 }
 
+// Type for the full Q&A pair sent to the backend
+interface QaPair {
+  question: string;
+  answer: string;
+  score: number;
+  feedback: string;
+  turn_num: number;
+}
+
+
 export default function Home() {
   const [backendMessage, setBackendMessage] = useState<string>('Loading backend connection status...');
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +37,9 @@ export default function Home() {
   const [appState, setAppState] = useState<AppState>('initial');
   const [currentStatus, setCurrentStatus] = useState<string>('');
 
-  const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
+  // --- STATE REFACTOR: Replace session_id with context state ---
+  const [extractedResumeText, setExtractedResumeText] = useState<string | null>(null);
+  const [parsedResumeData, setParsedResumeData] = useState<object | null>(null);
 
   const [jobRole, setJobRole] = useState<string>('');
   const [difficulty, setDifficulty] = useState<string>('medium');
@@ -43,7 +55,6 @@ export default function Home() {
   const [aiIntroMessage, setAiIntroMessage] = useState<string | null>(null);
   const [aiClosingMessage, setAiClosingMessage] = useState<string | null>(null);
 
-  // <<< FIX 1: ADD NEW STATE VARIABLE >>>
   const [textBeforeListening, setTextBeforeListening] = useState<string>('');
 
   // States for voice features
@@ -88,11 +99,13 @@ export default function Home() {
     setTurnNum(0);
     setOverallSummary(null);
     setError(null);
-    setCurrentSessionId(null);
     setAiIntroMessage(null);
     setAiClosingMessage(null);
-
-    // Also reset the new state variable
+    
+    // --- STATE REFACTOR: Clear new context state ---
+    setExtractedResumeText(null);
+    setParsedResumeData(null);
+    
     setTextBeforeListening('');
     
     resetTranscript();
@@ -120,18 +133,15 @@ export default function Home() {
     };
     fetchMessage();
 
-    // Load TTS voices asynchronously
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.onvoiceschanged = () => {
-        const voices = window.speechSynthesis.getVoices();
-        setTtsVoices(voices);
+        setTtsVoices(window.speechSynthesis.getVoices());
       };
       if (window.speechSynthesis.getVoices().length > 0) {
         setTtsVoices(window.speechSynthesis.getVoices());
       }
     }
     
-    // Cleanup synthesis instances on unmount
     return () => {
       if (window.speechSynthesis) {
           window.speechSynthesis.cancel();
@@ -140,8 +150,7 @@ export default function Home() {
 
   }, [BACKEND_BASE_URL]);
 
-  // <<< FIX 3: REPLACE THE PROBLEMATIC useEffect >>>
-  // This new effect correctly combines pre-existing text with the live transcript
+
   useEffect(() => {
     if (listening) {
       const separator = textBeforeListening && transcript ? ' ' : '';
@@ -153,9 +162,12 @@ export default function Home() {
   // Handler for file selection
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
-      setSelectedFile(event.target.files[0]);
-      setCurrentStatus(`File selected: ${event.target.files[0].name}`);
+      const file = event.target.files[0];
+      setSelectedFile(file);
+      setCurrentStatus(`File selected: ${file.name}`);
       setError(null);
+      // Automatically trigger upload after selection
+      handleFileUpload(file);
     } else {
       setSelectedFile(null);
       setCurrentStatus('No file chosen or selection cancelled.');
@@ -165,20 +177,20 @@ export default function Home() {
 
 
   // Handler for initiating the file upload
-  const handleFileUpload = async () => {
-    if (!selectedFile) {
+  const handleFileUpload = async (fileToUpload: File) => {
+    if (!fileToUpload) {
       setCurrentStatus('Please select a file first.');
       return;
     }
 
-    handleClearAll(); // Clear all previous states BEFORE starting a new upload process
+    handleClearAll(); 
 
     setAppState('uploading');
     setCurrentStatus('Processing resume with AI (this may take a few minutes for initial model loading)...');
     setError(null);
 
     const formData = new FormData();
-    formData.append('file', selectedFile);
+    formData.append('file', fileToUpload);
 
     try {
       const response = await fetch(`${BACKEND_BASE_URL}/upload-resume/`, {
@@ -192,7 +204,11 @@ export default function Home() {
       }
 
       const result = await response.json();
-      setCurrentSessionId(result.session_id);
+      
+      // --- STATE REFACTOR: Store context from backend ---
+      setExtractedResumeText(result.extracted_resume_text);
+      setParsedResumeData(result.parsed_resume_data);
+      
       setCurrentStatus('Resume processed successfully! Ready to start interview.');
       setAppState('parsing_complete');
 
@@ -207,7 +223,8 @@ export default function Home() {
 
   // Handler for starting the conversational interview
   const handleStartInterview = async () => {
-    if (appState !== 'parsing_complete' || currentSessionId === null) {
+    // --- STATE REFACTOR: Check for context instead of session ID ---
+    if (appState !== 'parsing_complete' || !extractedResumeText) {
       setCurrentStatus('Please upload and process a resume first.');
       return;
     }
@@ -228,8 +245,9 @@ export default function Home() {
       const response = await fetch(`${BACKEND_BASE_URL}/start-interview/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // --- API REFACTOR: Send context in body ---
         body: JSON.stringify({
-          session_id: currentSessionId,
+          extracted_resume_text: extractedResumeText,
           job_role: jobRole,
           difficulty: difficulty,
         }),
@@ -246,10 +264,13 @@ export default function Home() {
       const totalQuestions = result.total_questions;
       const turnNumber = result.turn_num;
 
+      // The first message is the intro, not a question to be answered
+      // The second message is the first question
       setChatMessages([
         { type: 'ai', content: aiInitialMessage },
         { type: 'ai', content: firstQuestion, turnNum: turnNumber }
       ]);
+
       setAiIntroMessage(aiInitialMessage);
       setCurrentQuestion(firstQuestion);
       setTurnNum(turnNumber);
@@ -266,7 +287,6 @@ export default function Home() {
   };
 
 
-  // Handler for initiating speech recognition (mic button click)
   const handleMicClick = () => {
     if (!browserSupportsSpeechRecognition) {
       const msg = "Browser does not support Speech Recognition.";
@@ -285,8 +305,6 @@ export default function Home() {
         SpeechRecognition.stopListening();
         setCurrentStatus('Speech recognition stopped.');
     } else {
-        // <<< FIX 2: MODIFY THIS BLOCK >>>
-        // Before starting, save the current text.
         setTextBeforeListening(currentAnswer); 
         resetTranscript();
         SpeechRecognition.startListening({ continuous: true, language: 'en-US' });
@@ -296,7 +314,6 @@ export default function Home() {
   };
 
 
-  // Handler for text-to-speech (speaker button click)
   const handleSpeakerClick = (textToSpeak: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       setCurrentStatus("Text-to-speech not supported in your browser.");
@@ -312,12 +329,6 @@ export default function Home() {
     if (ttsVoices.length > 0) {
         utterance.voice = ttsVoices.find(voice => voice.lang === 'en-US' && voice.name.includes('Google') && voice.name.includes('US')) || ttsVoices[0];
     }
-
-    utterance.onerror = (event: SpeechSynthesisErrorEvent) => {
-        console.error('Text-to-speech error:', event.error);
-        setCurrentStatus(`Text-to-speech error: ${event.error}`);
-        setError(`Text-to-speech error: ${event.error}`);
-    };
     
     window.speechSynthesis.speak(utterance);
   };
@@ -325,7 +336,8 @@ export default function Home() {
 
   // Handler for submitting an answer and getting the next question
   const handleSubmitAnswer = async () => {
-    if (!currentQuestion || currentAnswer.trim() === '' || currentSessionId === null) {
+    // --- STATE REFACTOR: Check for context ---
+    if (!currentQuestion || currentAnswer.trim() === '' || !extractedResumeText) {
       setCurrentStatus('Please provide an answer before submitting.');
       return;
     }
@@ -333,7 +345,6 @@ export default function Home() {
     if (listening) {
         SpeechRecognition.stopListening();
     }
-
     if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
     }
@@ -353,15 +364,32 @@ export default function Home() {
     }]);
 
     setCurrentAnswer('');
-    // Clear the text-before-listening state after submission
     setTextBeforeListening('');
 
     try {
+      // --- API REFACTOR: Construct full history for context ---
+      const qa_history: QaPair[] = chatMessages
+        .filter(msg => msg.type === 'user' && msg.evaluation)
+        .map(msg => {
+          const questionMsg = chatMessages.find(q => q.type === 'ai' && q.turnNum === msg.turnNum);
+          return {
+            question: questionMsg?.content || '',
+            answer: msg.content,
+            score: msg.evaluation!.score,
+            feedback: msg.evaluation!.feedback,
+            turn_num: msg.turnNum!,
+          };
+        });
+
       const response = await fetch(`${BACKEND_BASE_URL}/submit-answer/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', },
+        // --- API REFACTOR: Send full context ---
         body: JSON.stringify({
-          session_id: currentSessionId,
+          extracted_resume_text: extractedResumeText,
+          job_role: jobRole,
+          difficulty: difficulty,
+          qa_history: qa_history,
           current_question: answeredQuestionText,
           candidate_answer: submittedAnswerText,
           turn_num: currentTurnNumber,
@@ -387,7 +415,9 @@ export default function Home() {
         setCurrentQuestion(null);
         setAiClosingMessage(result.ai_closing_message);
         
-        setChatMessages(prevMessages => [...prevMessages, { type: 'ai', content: result.ai_closing_message || "Interview concluded." }]);
+        if (result.ai_closing_message) {
+          setChatMessages(prevMessages => [...prevMessages, { type: 'ai', content: result.ai_closing_message }]);
+        }
 
         setCurrentStatus('Interview complete! Generating overall summary...');
         await fetchOverallSummary();
@@ -415,15 +445,38 @@ export default function Home() {
 
   // Handler for fetching overall summary from backend
   const fetchOverallSummary = async () => {
-    if (currentSessionId === null) {
-        setOverallSummary('Error: No session ID to generate summary.');
+    // --- STATE REFACTOR: Check for context ---
+    if (!parsedResumeData) {
+        setOverallSummary('Error: No resume data available to generate summary.');
         return;
     }
     setAppState('generating_summary');
     setCurrentStatus('Generating final interview summary (this may take a moment)...');
     try {
-        const response = await fetch(`${BACKEND_BASE_URL}/generate-summary/${currentSessionId}`, {
-            method: 'GET',
+        // --- API REFACTOR: Construct full history for summary ---
+        const qa_evaluations: QaPair[] = chatMessages
+          .filter(msg => msg.type === 'user' && msg.evaluation)
+          .map(msg => {
+            const questionMsg = chatMessages.find(q => q.type === 'ai' && q.turnNum === msg.turnNum);
+            return {
+              question: questionMsg?.content || '',
+              answer: msg.content,
+              score: msg.evaluation!.score,
+              feedback: msg.evaluation!.feedback,
+              turn_num: msg.turnNum!,
+            };
+          });
+
+        // --- API REFACTOR: Use POST and send body ---
+        const response = await fetch(`${BACKEND_BASE_URL}/generate-summary/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', },
+            body: JSON.stringify({
+              parsed_resume_data: parsedResumeData,
+              job_role: jobRole,
+              difficulty: difficulty,
+              qa_evaluations: qa_evaluations,
+            }),
         });
         if (!response.ok) {
             const errorData = await response.json();
@@ -488,26 +541,7 @@ export default function Home() {
                          dark:text-gray-200 cursor-pointer"
               />
             </div>
-            <p className="text-base text-gray-400 mb-6">
-              Selected File: <strong className="text-gray-200">{selectedFile ? selectedFile.name : 'No file chosen'}</strong>
-            </p>
-            <div className="flex space-x-4">
-              <button
-                onClick={handleFileUpload}
-                disabled={!selectedFile}
-                className="flex-1 px-6 py-3 rounded-lg font-bold text-white transition-colors duration-200
-                           bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed text-lg"
-              >
-                {appState === 'uploading' ? 'Processing...' : 'Upload & Process Resume'}
-              </button>
-              <button 
-                onClick={handleClearAll}
-                className="px-6 py-3 rounded-lg font-bold text-white transition-colors duration-200
-                           bg-red-600 hover:bg-red-700"
-              >
-                Start Over
-              </button>
-            </div>
+            {/* Removed manual upload button to streamline flow */}
           </div>
         )}
 
@@ -572,30 +606,13 @@ export default function Home() {
           </div>
         )}
 
-        {/* Loading Spinner for Interview Start / Question Generation */}
-        {appState === 'starting_interview' && (
-          <div className="flex flex-col items-center justify-center p-8 rounded-lg shadow-lg mb-8
-                          bg-gray-800 border border-green-700">
-            <div className="spinner mb-4 w-12 h-12"></div>
-            <p className="text-lg font-medium text-green-400">{currentStatus}</p>
-          </div>
-        )}
-
         {/* Step 3: Conversational Interview - Visible when interview is active or completing */}
         {(appState === 'interview_active' || appState === 'submitting_answer' || appState === 'interview_complete' || appState === 'generating_summary') && (
           <div className="bg-gray-800 p-8 rounded-lg shadow-xl mb-8 border border-gray-700">
-            <h2 className="text-2xl font-bold text-blue-400 mb-6">Step 3: Interview In Progress</h2>
+            <h2 className="text-2xl font-bold text-blue-400 mb-6">Interview In Progress</h2>
             
             {/* Chat Messages Container */}
             <div className="h-96 overflow-y-auto p-4 mb-6 bg-gray-900 rounded-lg border border-gray-700 flex flex-col space-y-4">
-              {aiIntroMessage && (
-                <div className="flex justify-start">
-                  <div className="bg-gray-700 text-gray-200 p-3 rounded-lg max-w-[80%] shadow">
-                    <p className="font-semibold text-blue-300 mb-2">AI Interviewer:</p>
-                    <p className="text-sm leading-relaxed">{aiIntroMessage}</p>
-                  </div>
-                </div>
-              )}
               {chatMessages.map((message, index) => (
                 <div 
                   key={index} 
@@ -612,7 +629,7 @@ export default function Home() {
                     {message.type === 'ai' && message.turnNum && (
                       <p className="text-sm leading-relaxed font-bold mb-1">Question {message.turnNum}:</p>
                     )}
-                    <p className="text-sm leading-relaxed">
+                    <p className="text-sm leading-relaxed" style={{ whiteSpace: 'pre-wrap' }}>
                       {message.content}
                     </p>
                     {message.type === 'user' && message.evaluation && (
@@ -628,24 +645,20 @@ export default function Home() {
             </div>
 
             {/* Current Answer Input Area - Only visible if interview is active */}
-            {currentQuestion && (
+            {appState === 'interview_active' && currentQuestion && (
               <div className="mb-6">
                 <div className="flex space-x-2 mb-2">
-                  {/* NEW: Mic Button */}
                   <button
                     onClick={handleMicClick}
-                    disabled={appState === 'submitting_answer' || appState === 'interview_complete' || appState === 'generating_summary'}
-                    className="px-4 py-2 rounded-md font-semibold text-white transition-colors duration-200
-                               bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed text-sm"
+                    className={`px-4 py-2 rounded-md font-semibold text-white transition-colors duration-200 text-sm ${
+                      listening ? 'bg-red-600 hover:bg-red-700' : 'bg-purple-600 hover:bg-purple-700'
+                    }`}
                   >
-                    {listening ? 'Stop Listening' : 'Start Mic Input'}
+                    {listening ? 'Stop Listening' : 'Use Mic'}
                   </button>
-                  {/* NEW: Speaker Button */}
                   <button
                     onClick={() => handleSpeakerClick(currentQuestion)}
-                    disabled={appState === 'submitting_answer' || appState === 'interview_complete' || appState === 'generating_summary'}
-                    className="px-4 py-2 rounded-md font-semibold text-white transition-colors duration-200
-                               bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed text-sm"
+                    className="px-4 py-2 rounded-md font-semibold text-white transition-colors duration-200 bg-indigo-600 hover:bg-indigo-700 text-sm"
                   >
                     Read Question
                   </button>
@@ -654,36 +667,45 @@ export default function Home() {
                   value={currentAnswer}
                   onChange={(e) => setCurrentAnswer(e.target.value)}
                   rows={4}
-                  placeholder="Type your answer here or use mic..."
-                  disabled={listening || appState === 'submitting_answer' || appState === 'interview_complete' || appState === 'generating_summary'}
+                  placeholder="Type your answer here or use the mic..."
+                  disabled={listening}
                   className="w-full p-3 border border-gray-600 rounded-lg bg-gray-700 text-gray-100 placeholder-gray-400
                              focus:ring-blue-500 focus:border-blue-500 resize-y focus:outline-none"
                 />
                 <button
                   onClick={handleSubmitAnswer}
-                  disabled={currentAnswer.trim() === '' || appState === 'submitting_answer' || appState === 'interview_complete' || appState === 'generating_summary'}
-                  className="w-full px-6 py-3 rounded-lg font-bold text-white transition-colors duration-200
+                  disabled={currentAnswer.trim() === ''}
+                  className="w-full mt-2 px-6 py-3 rounded-lg font-bold text-white transition-colors duration-200
                              bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed text-lg"
                 >
-                  {appState === 'submitting_answer' ? 'Submitting...' : 'Submit Answer'}
+                  Submit Answer
                 </button>
               </div>
             )}
 
-            {aiClosingMessage && appState === 'interview_complete' && (
-                <div className="mt-8 p-4 rounded-lg bg-gray-700 border border-gray-600 text-gray-200 shadow-md">
-                    <p className="font-semibold text-lg text-green-400 mb-2">AI Interviewer:</p>
-                    <p className="text-base leading-relaxed">{aiClosingMessage}</p>
-                </div>
+            {/* Loading spinner while submitting answer */}
+            {appState === 'submitting_answer' && (
+              <div className="flex flex-col items-center justify-center p-8">
+                  <div className="spinner mb-4 w-12 h-12"></div>
+                  <p className="text-lg font-medium text-blue-400">{currentStatus}</p>
+              </div>
             )}
 
-            {appState === 'interview_complete' && overallSummary && (
-                <div className="mt-8 pt-6 border-t border-gray-700">
-                    <h3 className="text-xl font-semibold text-gray-300 mb-4">Overall Interview Summary:</h3>
-                    <div className="bg-gray-700 p-4 rounded-lg border border-blue-600 text-gray-200 whitespace-pre-wrap break-words max-h-96 overflow-y-auto shadow-inner">
-                        {overallSummary}
-                    </div>
-                </div>
+            {/* Final Summary Section */}
+            {(appState === 'interview_complete' || appState === 'generating_summary') && (
+              <div className="mt-8 pt-6 border-t border-gray-700">
+                <h3 className="text-xl font-semibold text-gray-300 mb-4">Overall Interview Summary:</h3>
+                {overallSummary ? (
+                  <div className="bg-gray-700 p-4 rounded-lg border border-blue-600 text-gray-200 whitespace-pre-wrap break-words max-h-96 overflow-y-auto shadow-inner">
+                    {overallSummary}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-8">
+                    <div className="spinner mb-4 w-12 h-12"></div>
+                    <p className="text-lg font-medium text-blue-400">{currentStatus}</p>
+                  </div>
+                )}
+              </div>
             )}
             
             <div className="flex justify-center space-x-4 mt-8 flex-wrap">
@@ -696,13 +718,13 @@ export default function Home() {
                       Start New Interview
                   </button>
               )}
-              {(appState === 'interview_active' || appState === 'submitting_answer') && (
+              {appState === 'interview_active' && (
                   <button
                       onClick={() => {
                           if (window.confirm("Are you sure you want to end the interview early?")) {
-                              setAppState('interview_complete');
                               setCurrentQuestion(null);
-                              setCurrentStatus('Interview ended. Generating overall summary...');
+                              setAppState('interview_complete');
+                              setCurrentStatus('Interview ended early. Generating summary...');
                               fetchOverallSummary();
                           }
                       }}
@@ -713,15 +735,6 @@ export default function Home() {
                   </button>
               )}
             </div>
-          </div>
-        )}
-
-        {/* Loading Spinners for various stages */}
-        {(appState === 'submitting_answer' || appState === 'generating_summary' || (appState === 'interview_complete' && !overallSummary)) && (
-          <div className="flex flex-col items-center justify-center p-8 rounded-lg shadow-lg mb-8
-                          bg-gray-800 border border-blue-700">
-            <div className="spinner mb-4 w-12 h-12"></div>
-            <p className="text-lg font-medium text-blue-400">{currentStatus}</p>
           </div>
         )}
 
