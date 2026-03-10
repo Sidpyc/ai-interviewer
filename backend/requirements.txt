@@ -14,3 +14,4 @@ sqlalchemy
 databases
 fpdf2
 psycopg2-binary
+groq
