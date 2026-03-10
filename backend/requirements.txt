@@ -13,5 +13,4 @@ asyncpg
 sqlalchemy 
 databases
 fpdf2
-google-generativeai
 psycopg2-binary
