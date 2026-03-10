@@ -33,7 +33,8 @@ export default function Home() {
   const [backendMessage, setBackendMessage] = useState<string>('Loading backend connection status...');
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_selectedFile, setSelectedFile] = useState<File | null>(null);
   const [appState, setAppState] = useState<AppState>('initial');
   const [currentStatus, setCurrentStatus] = useState<string>('');
 
@@ -52,8 +53,10 @@ export default function Home() {
 
   const [overallSummary, setOverallSummary] = useState<string | null>(null);
   
-  const [aiIntroMessage, setAiIntroMessage] = useState<string | null>(null);
-  const [aiClosingMessage, setAiClosingMessage] = useState<string | null>(null);
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_aiIntroMessage, setAiIntroMessage] = useState<string | null>(null);
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_aiClosingMessage, setAiClosingMessage] = useState<string | null>(null);
 
   const [textBeforeListening, setTextBeforeListening] = useState<string>('');
 
@@ -531,7 +534,6 @@ export default function Home() {
                 id="resumeFileInput"
                 accept=".pdf,.docx"
                 onChange={handleFileChange}
-                disabled={appState === 'uploading'}
                 className="block w-full text-sm text-gray-300
                          file:mr-4 file:py-2 file:px-4
                          file:rounded-full file:border-0
